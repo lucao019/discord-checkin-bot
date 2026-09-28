@@ -15,15 +15,17 @@ import sharp from 'sharp'
 
 const token = process.env.DISCORD_TOKEN
 const userId = process.env.USER_ID
-const catracaChannelId = process.env.CATRACA_CHANNEL_ID
+const catracaChannelIdEnv = process.env.CATRACA_CHANNEL_ID
 
 if (!token) {
   throw new Error('DISCORD_TOKEN não encontrado no .env')
 }
 
-if (!catracaChannelId) {
+if (!catracaChannelIdEnv) {
   throw new Error('CATRACA_CHANNEL_ID não encontrado no .env')
 }
+
+const catracaChannelId: string = catracaChannelIdEnv
 
 const client = new Client({
   intents: [
@@ -110,71 +112,43 @@ async function baixarImagem(url: string) {
 // CARD GRÁFICO
 // ====================================
 
+
+
 async function gerarProfileCard(
   member: GuildMember,
   user: User,
   numero: number,
-) {
+): Promise<{
+  buffer: Buffer
+  extension: 'png' | 'gif'
+}> {
   const largura = 900
   const altura = 390
+  const bannerHeight = 220
 
-  const bannerHeight = 235
+
 
   const avatarSize = 150
   const avatarX = 50
   const avatarY = 170
 
+  const bannerAnimado =
+    user.banner?.startsWith('a_') ?? false
+
   const bannerUrl = user.bannerURL({
     size: 1024,
+    extension: bannerAnimado
+      ? 'gif'
+      : 'png',
   })
 
   const avatarUrl = member.displayAvatarURL({
     size: 512,
+    extension: 'png',
   })
 
   // --------------------------------
-  // FUNDO
-  // --------------------------------
-
-  const fundo = sharp({
-    create: {
-      width: largura,
-      height: altura,
-      channels: 4,
-      background: '#111318',
-    },
-  })
-
-  const layers: sharp.OverlayOptions[] = []
-
-  // --------------------------------
-  // BANNER
-  // --------------------------------
-
-  if (bannerUrl) {
-    try {
-      const bannerBuffer = await baixarImagem(bannerUrl)
-
-      const banner = await sharp(bannerBuffer)
-        .resize(largura, bannerHeight, {
-          fit: 'cover',
-          position: 'centre',
-        })
-        .png()
-        .toBuffer()
-
-      layers.push({
-        input: banner,
-        top: 0,
-        left: 0,
-      })
-    } catch {
-      // Se o banner falhar, usa cor sólida.
-    }
-  }
-
-  // --------------------------------
-  // GRADIENTE ENTRE BANNER E PERFIL
+  // ELEMENTOS FIXOS DO CARD
   // --------------------------------
 
   const gradiente = Buffer.from(`
@@ -213,14 +187,8 @@ async function gerarProfileCard(
     </svg>
   `)
 
-  layers.push({
-    input: gradiente,
-    top: 100,
-    left: 0,
-  })
-
   // --------------------------------
-  // AVATAR CIRCULAR
+  // AVATAR
   // --------------------------------
 
   const avatarOriginal =
@@ -254,7 +222,9 @@ async function gerarProfileCard(
     .png()
     .toBuffer()
 
-  // Borda externa do avatar
+  // --------------------------------
+  // BORDA DO AVATAR
+  // --------------------------------
 
   const bordaSize = avatarSize + 14
 
@@ -272,18 +242,6 @@ async function gerarProfileCard(
       />
     </svg>
   `)
-
-  layers.push({
-    input: borda,
-    top: avatarY - 7,
-    left: avatarX - 7,
-  })
-
-  layers.push({
-    input: avatar,
-    top: avatarY,
-    left: avatarX,
-  })
 
   // --------------------------------
   // TEXTO
@@ -356,21 +314,159 @@ async function gerarProfileCard(
     </svg>
   `)
 
-  layers.push({
-    input: texto,
-    top: 0,
-    left: 0,
-  })
-
   // --------------------------------
-  // RENDER FINAL
+  // LAYERS FIXAS
   // --------------------------------
 
-  return fundo
-    .composite(layers)
-    .png()
+  const layersFixas: sharp.OverlayOptions[] = [
+    {
+  input: gradiente,
+  top: 40,
+  left: 0,
+},
+    {
+      input: borda,
+      top: avatarY - 7,
+      left: avatarX - 7,
+    },
+    {
+      input: avatar,
+      top: avatarY,
+      left: avatarX,
+    },
+    {
+      input: texto,
+      top: 0,
+      left: 0,
+    },
+  ]
+
+  // --------------------------------
+  // SEM BANNER
+  // --------------------------------
+
+  if (!bannerUrl) {
+    const buffer = await sharp({
+      create: {
+        width: largura,
+        height: altura,
+        channels: 4,
+        background: '#111318',
+      },
+    })
+      .composite(layersFixas)
+      .png()
+      .toBuffer()
+
+    return {
+      buffer,
+      extension: 'png',
+    }
+  }
+
+  const bannerBuffer =
+    await baixarImagem(bannerUrl)
+
+  // --------------------------------
+  // BANNER ESTÁTICO
+  // --------------------------------
+
+  if (!bannerAnimado) {
+    const banner = await sharp(bannerBuffer)
+      .resize(largura, bannerHeight, {
+  fit: 'cover',
+  position: 'centre',
+})
+      .png()
+      .toBuffer()
+
+    const buffer = await sharp({
+      create: {
+        width: largura,
+        height: altura,
+        channels: 4,
+        background: '#111318',
+      },
+    })
+      .composite([
+        {
+  input: banner,
+  top: 0,
+  left: 0,
+},
+        ...layersFixas,
+      ])
+      .png()
+      .toBuffer()
+
+    return {
+      buffer,
+      extension: 'png',
+    }
+  }
+
+    // --------------------------------
+  // BANNER ANIMADO
+  // --------------------------------
+
+  const metadata = await sharp(
+    bannerBuffer,
+    {
+      animated: true,
+    },
+  ).metadata()
+
+  const paginas = metadata.pages ?? 1
+
+  const delays =
+    metadata.delay &&
+    metadata.delay.length === paginas
+      ? metadata.delay
+      : Array(paginas).fill(100)
+
+
+    const layersAnimadas: sharp.OverlayOptions[] = []
+
+  for (let pagina = 0; pagina < paginas; pagina++) {
+    const offsetY = pagina * altura
+
+    for (const layer of layersFixas) {
+      layersAnimadas.push({
+        ...layer,
+        top:
+          typeof layer.top === 'number'
+            ? layer.top + offsetY
+            : offsetY,
+      })
+    }
+  }
+
+  const buffer = await sharp(
+    bannerBuffer,
+    {
+      animated: true,
+    },
+  )
+    .resize(largura, bannerHeight, {
+  fit: 'cover',
+  position: 'centre',
+})
+.extend({
+  bottom: altura - bannerHeight,
+  background: '#111318',
+})
+    .composite(layersAnimadas)
+    .gif({
+      loop: metadata.loop ?? 0,
+      delay: delays,
+    })
     .toBuffer()
-}
+
+    return {
+    buffer,
+    extension: 'gif',
+  }
+} 
 
 // ====================================
 // TREE VIEW
@@ -381,83 +477,82 @@ function gerarTree(
   user: User,
   numero: number,
 ) {
-  const guildAvatar = member.avatarURL()
-  const globalAvatar = user.avatarURL()
-  const banner = user.bannerURL()
-
-  const accent =
-    user.hexAccentColor ?? 'null'
-
   const roles = member.roles.cache
-    .filter(
-      (role) => role.id !== member.guild.id,
-    )
+    .filter((role) => role.id !== member.guild.id)
     .sort((a, b) => b.position - a.position)
     .map((role) => role.name)
 
   const linhas: string[] = []
 
-  linhas.push('MEMBER')
+  linhas.push('MEMBRO')
 
-  linhas.push('├─ identity')
+  // IDENTIDADE
+  linhas.push('├─ identidade')
   linhas.push(
-    `│  ├─ displayName: ${member.displayName}`,
+    `│  ├─ nome no servidor: ${member.displayName}`,
   )
   linhas.push(
-    `│  ├─ username: ${user.username}`,
+    `│  ├─ usuário: ${user.username}`,
   )
-  linhas.push(`│  ├─ id: ${user.id}`)
-  linhas.push(`│  └─ bot: ${user.bot}`)
+  linhas.push(
+    `│  └─ id: ${user.id}`,
+  )
 
   linhas.push('│')
 
-  linhas.push('├─ account')
+  // CONTA DISCORD
+  linhas.push('├─ conta Discord')
   linhas.push(
-    `│  ├─ created: ${dataHora(
+    `│  ├─ criada em: ${dataHora(
       user.createdTimestamp,
     )}`,
   )
   linhas.push(
-    `│  └─ age: ${idadeConta(
+    `│  └─ idade da conta: ${idadeConta(
       user.createdTimestamp,
     )}`,
   )
 
   linhas.push('│')
 
-  linhas.push('├─ guild')
-  linhas.push(
-    `│  ├─ joined: ${dataHora(
-      member.joinedTimestamp,
-    )}`,
-  )
-  linhas.push(`│  ├─ member: #${numero}`)
-  linhas.push(
-    `│  ├─ nickname: ${
-      member.nickname ?? 'null'
-    }`,
-  )
-  linhas.push(
-    `│  ├─ pending: ${member.pending}`,
-  )
+  // SERVIDOR
+  linhas.push('├─ servidor')
 
-  linhas.push(
-    `│  └─ boostingSince: ${
-      member.premiumSinceTimestamp
-        ? dataHora(
-            member.premiumSinceTimestamp,
-          )
-        : 'null'
-    }`,
-  )
+  const dadosServidor: string[] = [
+    `entrou em: ${dataHora(member.joinedTimestamp)}`,
+    `membro: #${numero}`,
+  ]
 
-  linhas.push('│')
+  // Só mostra apelido se realmente existir
+  if (member.nickname) {
+    dadosServidor.push(
+      `apelido: ${member.nickname}`,
+    )
+  }
 
-  linhas.push('├─ roles')
+  // Só mostra boost se o membro estiver boostando
+  if (member.premiumSinceTimestamp) {
+    dadosServidor.push(
+      `boost desde: ${dataHora(
+        member.premiumSinceTimestamp,
+      )}`,
+    )
+  }
 
-  if (roles.length === 0) {
-    linhas.push('│  └─ null')
-  } else {
+  dadosServidor.forEach((dado, index) => {
+    const ultimo =
+      index === dadosServidor.length - 1
+
+    linhas.push(
+      `│  ${ultimo ? '└─' : '├─'} ${dado}`,
+    )
+  })
+
+  // CARGOS
+  if (roles.length > 0) {
+    linhas.push('│')
+    linhas.push('├─ cargos')
+
     roles.forEach((role, index) => {
       const ultimo =
         index === roles.length - 1
@@ -470,25 +565,16 @@ function gerarTree(
     })
   }
 
-  linhas.push('│')
-
-  linhas.push('└─ profile')
-  linhas.push(
-    `   ├─ accent: ${accent}`,
-  )
-  linhas.push(
-    `   ├─ guildAvatar: ${Boolean(
-      guildAvatar,
-    )}`,
-  )
-  linhas.push(
-    `   ├─ globalAvatar: ${Boolean(
-      globalAvatar,
-    )}`,
-  )
-  linhas.push(
-    `   └─ banner: ${Boolean(banner)}`,
-  )
+  // TRANSFORMA A ÚLTIMA SEÇÃO EM └─
+  for (let i = linhas.length - 1; i >= 0; i--) {
+    if (linhas[i]?.startsWith('├─')) {
+      linhas[i] = linhas[i]!.replace(
+        '├─',
+        '└─',
+      )
+      break
+    }
+  }
 
   return linhas.join('\n')
 }
@@ -536,13 +622,16 @@ async function gerarCheckIn(
       numero,
     )
 
-  const arquivo =
-    new AttachmentBuilder(
-      profileCard,
-      {
-        name: 'checkin-profile.png',
-      },
-    )
+  const nomeArquivo =
+  `checkin-profile.${profileCard.extension}`
+
+const arquivo =
+  new AttachmentBuilder(
+    profileCard.buffer,
+    {
+      name: nomeArquivo,
+    },
+  )
 
   const tree =
     gerarTree(
@@ -568,8 +657,8 @@ async function gerarCheckIn(
       )
 
       .setImage(
-        'attachment://checkin-profile.png',
-      )
+  `attachment://${nomeArquivo}`,
+)
 
       .setFooter({
         text:
@@ -579,11 +668,11 @@ async function gerarCheckIn(
 
       .setTimestamp()
 
-  if (user.accentColor !== null) {
-    embed.setColor(
-      user.accentColor,
-    )
-  }
+  if (user.accentColor != null) {
+  embed.setColor(
+    user.accentColor,
+  )
+}
 
   await channel.send({
     embeds: [embed],
@@ -922,7 +1011,7 @@ client.on(
         'Erro no CheckIn:',
         error,
       )
-    }
+      }
   },
 )
 
