@@ -1,0 +1,25 @@
+{
+  "name": "checkin",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "test-checkin": "tsx src/index.ts --test",
+    "sync-checkin": "tsx src/index.ts --sync",
+    "rebuild-checkin": "tsx src/index.ts --rebuild",
+    "start": "tsx src/index.ts"
+  },
+  "keywords": [],
+  "type": "commonjs",
+  "dependencies": {
+    "discord.js": "^14.27.0",
+    "dotenv": "^18.0.4",
+    "sharp": "^0.35.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
